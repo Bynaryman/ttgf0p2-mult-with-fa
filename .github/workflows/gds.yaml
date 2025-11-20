@@ -7,16 +7,177 @@ on:
 jobs:
   gds:
     runs-on: ubuntu-24.04
+    env:
+      TT_TOOLS_REPO: TinyTapeout/tt-support-tools
+      TT_TOOLS_REF: main
+      LIBRELANE_VERSION: 2.4.2
+      PDK: gf180mcuD
     steps:
-      - name: checkout repo
+      - name: Checkout design repo
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Build GDS
-        uses: TinyTapeout/tt-gds-action@ttgf0p2
+      - name: Set up environment variables
+        shell: bash
+        run: |
+          PDK=$PDK
+          PDK_ROOT=/home/runner/pdk
+          TT_ARGS="--gf"
+
+          cat <<'__EOF' >> $GITHUB_ENV
+          PDK=$PDK
+          PDK_ROOT=$PDK_ROOT
+          TT_ARGS=$TT_ARGS
+          __EOF
+
+      - name: Install prerequisites
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
         with:
-          pdk: gf180mcuD
+          packages: librsvg2-bin pngquant ghdl-llvm
+          version: tinytapeout_gds_action
+
+      - name: Checkout tt-support-tools repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TT_TOOLS_REPO }}
+          ref: ${{ env.TT_TOOLS_REF }}
+          path: tt
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install tt-support-tools dependencies
+        shell: bash
+        run: pip install -r tt/requirements.txt
+
+      - name: Fetch verilog and build config
+        shell: bash
+        run: ./tt/tt_tool.py --create-user-config $TT_ARGS
+
+      - name: Install LibreLane
+        shell: bash
+        run: pip install librelane==${{ env.LIBRELANE_VERSION }}
+
+      - name: Patch LibreLane synth flow for FA mapping
+        shell: bash
+        run: |
+          python - <<'PY'
+import pathlib
+import librelane.scripts.pyosys.synthesize as synth
+
+path = pathlib.Path(synth.__file__)
+text = path.read_text()
+needle = '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n    d.run_pass("share")  # Share logic across the design\n'
+replacement = '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n    d.run_pass("share")  # Share logic across the design\n'
+if needle not in text:
+    raise SystemExit("Expected snippet not found in synthesize.py; LibreLane version may have changed")
+path.write_text(text.replace(needle, replacement, 1))
+print(f"Patched {path} to insert maccmap pass")
+PY
+
+      - name: Make GDS with LibreLane
+        shell: bash
+        run: ./tt/tt_tool.py --harden $TT_ARGS
+
+      - name: Show build files (for debugging)
+        shell: bash
+        run: find runs/wokwi/
+
+      - name: Linter output
+        if: always()
+        shell: bash
+        run: |
+          LINTER_LOG=(runs/wokwi/*-verilator-lint/verilator-lint.log)
+          LINTER_LOG=${LINTER_LOG[0]}
+
+          echo "DEBUG LINTER_LOG *$LINTER_LOG*"
+          cat $LINTER_LOG
+          echo "END DEBUG"
+
+          if [ -s "$LINTER_LOG" ]; then
+            set +e
+            count_error=$(egrep -i "^%Error"   $LINTER_LOG | wc -l)
+            count_warn=$( egrep -i "^%Warning" $LINTER_LOG | wc -l)
+            count_other=$(egrep -i "^%"        $LINTER_LOG | egrep -v "%(Warning|Error)" | wc -l)
+            set -e
+
+            open=""
+            summary=""
+            icon=":green_circle:"
+            if [ $count_other -gt 0 ]; then
+              summary="$count_other message(s)"
+              icon=":orange_circle:"
+            fi
+            if [ $count_warn -gt 0 ]; then
+              summary="$count_warn warning(s)"
+              icon=":orange_circle:"
+            fi
+            if [ $count_error -gt 0 ]; then
+              summary="$count_error error(s)"
+              icon=":red_circle:"
+              open="open"
+            fi
+            if [ -n "$summary" ]; then
+              summary="[$summary]"
+            fi
+
+            echo "<details ${open}>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary><h1>Linter output&nbsp;&nbsp;<h4>${summary} ${icon}</h4></h1></summary>" >> $GITHUB_STEP_SUMMARY
+            echo "<pre>" >> $GITHUB_STEP_SUMMARY
+            sed 's/^/    /' < $LINTER_LOG >> $GITHUB_STEP_SUMMARY
+            echo "</pre>" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Yosys warnings
+        shell: bash
+        run: ./tt/tt_tool.py --print-warnings $TT_ARGS >> $GITHUB_STEP_SUMMARY
+
+      - name: Routing summary
+        shell: bash
+        run: ./tt/tt_tool.py --print-stats $TT_ARGS >> $GITHUB_STEP_SUMMARY
+
+      - name: Cell usage summary
+        shell: bash
+        run: ./tt/tt_tool.py --print-cell-category $TT_ARGS >> $GITHUB_STEP_SUMMARY
+
+      - name: Publish build logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GDS_logs
+          path: |
+            src/*
+            runs/wokwi/*
+
+      - name: Prepare tt_submission artifact
+        shell: bash
+        run: ./tt/tt_tool.py --create-tt-submission $TT_ARGS
+
+      - name: Publish tt_submission artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tt_submission
+          path: |
+            src/*
+            docs/*
+            tt_submission/*
+            info.yaml
+            LICENSE
+
+      - name: Render PNG from GDS
+        shell: bash
+        run: './tt/tt_tool.py --create-png $TT_ARGS 2>&1 || echo "WARNING: Failed to render PNG preview from GDS; error $?"'
+
+      - name: Upload gds_render (png) artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gds_render
+          path: gds_render.png
 
   precheck:
     needs: gds
@@ -41,7 +202,7 @@ jobs:
     needs: gds
     runs-on: ubuntu-24.04
     permissions:
-      pages: write      # to deploy to Pages
-      id-token: write   # to verify the deployment originates from an appropriate source
+      pages: write
+      id-token: write
     steps:
       - uses: TinyTapeout/tt-gds-action/viewer@ttgf0p2
