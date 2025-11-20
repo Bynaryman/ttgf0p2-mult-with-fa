@@ -2,17 +2,17 @@
 
 # Tiny Tapeout GF180 – Multiplier with FA Targets
 
-This project is a stripped-down Tiny Tapeout design whose only job is to multiply two 4-bit operands from the UI bus and present the 8-bit product on `uo_out`.
-The logic is intentionally tiny so we can experiment with enabling LibreLane/Yosys adder mapping and watch whether the flow starts using the full-adder cells provided by the GF180 PDK.
-With the default configuration the pipeline is purely synchronous: operands are sampled every clock cycle (when `ena=1`) and the registered product feeds the output pins.
+This project is a stripped-down Tiny Tapeout design whose only job is to multiply two 24-bit operands and present a reduction of the 48-bit product on `uo_out`.
+Operand data streams in eight bits at a time over `ui_in`: three consecutive bytes become operand A, the next three bytes become operand B, and the pattern repeats.
+The goal is to force the LibreLane/Yosys flow to emit dense adder structures (and ideally map them to the GF180 full-adder cells) while keeping the HDL simple.
 
 ## How it works
 
-- `ui_in[3:0]` carries operand A and `ui_in[7:4]` carries operand B.
-- On each rising edge of `clk`, the module multiplies the two multiplicands and stores the product in a register (reset clears it to zero).
-- `uo_out[7:0]` mirrors the registered product; `uio` pins are unused.
+- Every `ena`-qualified clock edge captures the current `ui_in` byte. The first three bytes form operand A (LSB last), the next three form operand B, and the pattern repeats.
+- Once either register shifts in a new byte, the design recomputes the registered 24×24 product. `uo_out[7:0]` always mirrors eight copies of a single reduction bit (`1` if any product bit is high, `0` otherwise); `uio` pins stay unused.
+- There is no additional framing or stall behavior: the multiplier keeps integrating bytes as they arrive, even if the operands are only partially updated.
 
-This gives us fully deterministic combinational logic plus one register stage, which is enough arithmetic structure for the synthesis flow to either keep generic adders or apply the FA/RCA mappings we plan to toggle.
+This gives us a deterministic sequential datapath with enough partial products to encourage the synthesis flow to build compressor trees, making it easier to spot whether `SYNTH_FA_MAP` takes effect.
 
 ## Repository layout
 
@@ -21,7 +21,8 @@ This gives us fully deterministic combinational logic plus one register stage, w
 ├── docs/              # Datasheet content (see docs/info.md)
 ├── info.yaml          # Tiny Tapeout metadata, pinout, authorship
 ├── src/
-│   └── project.v      # Single-file design with the tt_um_binaryman_multfa top
+│   ├── project.v      # Streaming 24x24 multiplier
+│   └── fa_map.v       # Techmap that ties Yosys $fa cells to GF180 adders
 ├── test/
 │   ├── Makefile       # Cocotb + icarus targets
 │   ├── tb.v           # Simple structural testbench
@@ -37,4 +38,4 @@ make -C test         # Cocotb + Icarus
 make -C test sim     # Icarus-only smoke test
 ```
 
-The regression sweeps several operand pairs, waits one cycle for the registered product, and asserts that the observed `uo_out` matches the expected multiplication result.
+The regression drives a deterministic byte stream into the design, mirrors the streaming protocol in Python, and checks that the replicated reduction bit matches the model. A second test freezes `ena` to confirm the pipeline holds its output.

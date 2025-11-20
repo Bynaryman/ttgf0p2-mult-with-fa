@@ -9,7 +9,7 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-`tt_um_binaryman_multfa` samples two 4-bit operands from the UI bus and registers their 8-bit product. `ui_in[3:0]` supplies operand A, `ui_in[7:4]` supplies operand B. On every rising edge of `clk`, if `rst_n` is asserted and `ena` is high, the operands are multiplied and the result is stored; the register resets to zero when `rst_n` goes low. `uo_out[7:0]` always reflects the registered product, and every `uio` pin is unused (held as input).
+`tt_um_binaryman_multfa` streams 8-bit chunks from the UI bus into two 24-bit shift registers and multiplies them together. The first three `ena`-qualified bytes fill operand A (LSB last), the next three bytes fill operand B, and the pattern repeats forever. Each time either register shifts, the 24×24 product is recomputed and stored; `uo_out[7:0]` mirrors eight copies of a single bit that goes high whenever any bit of the 48-bit product is high. Every `uio` pin remains unused (held as input).
 
 ## How to test
 
@@ -17,10 +17,10 @@ You can also include images in this folder and reference them in the markdown. E
 2. Run `make -C test` for the full Cocotb suite or `make -C test sim` for the Icarus-only path.
 3. Inspect `test/results.xml` or `test/tb.vcd` for pass/fail information and waveforms.
 
-The regression drives several operand pairs, waits one clock for the registered product, and checks that `uo_out` matches the expected 8-bit multiply result after reset comes up.
+The regression mirrors the byte-stream protocol in Python, drives a deterministic sequence of 8-bit values into `ui_in`, and compares the observed low byte of the product against the model each cycle. A second test drops `ena` to verify the output register freezes when the pipeline is disabled.
 
 ## External hardware
 
-- Drive the Tiny Tapeout UI bus with two 4-bit values (`ui_in[3:0]` = A, `ui_in[7:4]` = B). Update on the rising clock edge while `ena` is asserted.
-- Observe the 8-bit registered product on `uo_out[7:0]` with LEDs, a logic analyzer, or a microcontroller.
+- Stream 8-bit values onto `ui_in[7:0]` while `ena` is asserted. Every three bytes update one operand register, and the following three update the other; no extra framing is required.
+- Observe the replicated “product-nonzero” flag on `uo_out[7:0]` with LEDs, a logic analyzer, or a microcontroller.
 - Leave all `uio` pins floating or tied low; they are unused inputs in this design.
