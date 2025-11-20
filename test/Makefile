@@ -4,7 +4,7 @@
 # defaults
 SIM ?= icarus
 TOPLEVEL_LANG ?= verilog
-SRC_DIR = $(PWD)/../src
+SRC_DIR := $(abspath $(CURDIR)/../src)
 PROJECT_SOURCES = project.v
 
 ifneq ($(GATES),yes)
@@ -32,6 +32,7 @@ endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
+COMPILE_ARGS 		+= -DCOCOTB_SIM
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v
@@ -40,7 +41,8 @@ TOPLEVEL = tb
 # List test modules to run, separated by commas and without the .py suffix:
 COCOTB_TEST_MODULES = test
 
-COCOTB_CONFIG := $(shell command -v cocotb-config 2>/dev/null)
+# Prefer cocotb only when the tool exists and the Python module imports cleanly.
+COCOTB_CONFIG := $(shell python -c "import importlib.util,shutil;cfg=shutil.which('cocotb-config');print(cfg if cfg and importlib.util.find_spec('cocotb') else '')" 2>/dev/null)
 
 ifeq ($(COCOTB_CONFIG),)
 

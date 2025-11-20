@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge, Timer
 
 
 def pack_operands(a: int, b: int) -> int:
@@ -12,7 +12,7 @@ def pack_operands(a: int, b: int) -> int:
 
 
 async def initialize_dut(dut):
-    clock = Clock(dut.clk, 20, units="ns")
+    clock = Clock(dut.clk, 20, unit="ns")
     cocotb.start_soon(clock.start())
 
     dut.ena.value = 1
@@ -31,8 +31,10 @@ async def test_all_operand_pairs(dut):
     for a in range(16):
         for b in range(16):
             dut.ui_in.value = pack_operands(a, b)
-            await ClockCycles(dut.clk, 1)
+            await RisingEdge(dut.clk)
+            await ReadOnly()  # allow registered product to settle after the edge
             assert int(dut.uo_out.value) == a * b, f"{a}*{b} mismatch"
+            await Timer(1, unit="ps")  # exit read-only before driving next vector
 
 
 @cocotb.test()
@@ -45,6 +47,8 @@ async def test_disable_holds_last_product(dut):
 
     dut.ena.value = 0
     dut.ui_in.value = pack_operands(15, 15)
-    await ClockCycles(dut.clk, 2)
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
 
+    await ReadOnly()
     assert int(dut.uo_out.value) == expected, "ena low should freeze the register"
