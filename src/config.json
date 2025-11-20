@@ -33,7 +33,7 @@
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
   "//": "Adder mapping (FA/RCA/CSA techmaps); PDK includes addf cells, so point FA map to the local techmap.",
-  "SYNTH_ADDER_TYPE": "YOSYS",
+  "SYNTH_ADDER_TYPE": "FA",
   "SYNTH_FA_MAP": "src/fa_map.v",
   "SYNTH_RCA_MAP": null,
   "SYNTH_CSA_MAP": null,
