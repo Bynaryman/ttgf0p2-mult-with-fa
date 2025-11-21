@@ -1,0 +1,101 @@
+name: gds_orfs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gds_orfs:
+    runs-on: ubuntu-24.04
+    env:
+      TT_TOOLS_REPO: TinyTapeout/tt-support-tools
+      TT_TOOLS_REF: main
+      LIBRELANE_VERSION: 2.4.2
+      PDK: gf180mcuD
+    steps:
+      - name: Checkout design repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up environment variables
+        shell: bash
+        run: |
+          PDK=$PDK
+          PDK_ROOT=/home/runner/pdk
+          TT_ARGS="--gf"
+
+          cat <<__EOF >> $GITHUB_ENV
+          PDK=$PDK
+          PDK_ROOT=$PDK_ROOT
+          TT_ARGS=$TT_ARGS
+          __EOF
+
+      - name: Install prerequisites
+        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        with:
+          packages: librsvg2-bin pngquant ghdl-llvm
+          version: tinytapeout_gds_action
+
+      - name: Checkout tt-support-tools repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TT_TOOLS_REPO }}
+          ref: ${{ env.TT_TOOLS_REF }}
+          path: tt
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install tt-support-tools dependencies
+        shell: bash
+        run: pip install -r tt/requirements.txt
+
+      - name: Fetch verilog and build config
+        shell: bash
+        run: ./tt/tt_tool.py --create-user-config ${{ env.TT_ARGS }}
+
+      - name: Install LibreLane
+        shell: bash
+        run: pip install librelane==${{ env.LIBRELANE_VERSION }}
+
+      - name: Patch LibreLane synth flow (pre-map $fa)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import pathlib
+          import sys
+          spec = importlib.util.find_spec("librelane.scripts.pyosys.synthesize")
+          if spec is None or spec.origin is None:
+              sys.exit("Could not locate librelane.scripts.pyosys.synthesize")
+          path = pathlib.Path(spec.origin)
+          text = path.read_text()
+          block = (
+              '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n'
+              '    d.run_pass("share")  # Share logic across the design\n'
+          )
+          if block not in text:
+              sys.exit("Expected block not found in synthesize.py; LibreLane version may have changed")
+          replacement = (
+              '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n'
+              '    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n'
+              '    d.run_pass("techmap", "-map", "src/fa_map.v")  # Map $fa early to tech cells\n'
+              '    d.run_pass("share")  # Share logic across the design\n'
+          )
+          path.write_text(text.replace(block, replacement, 1))
+          print(f"Patched {path} to insert maccmap and early fa techmap")
+          PY
+
+      - name: Make GDS with LibreLane (ORFS-like)
+        shell: bash
+        run: ./tt/tt_tool.py --harden ${{ env.TT_ARGS }}
+
+      - name: Publish build logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GDS_logs_orfs
+          path: runs/wokwi/*
