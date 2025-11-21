@@ -66,10 +66,12 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import importlib.util
           import pathlib
-          import librelane.scripts.pyosys.synthesize as synth
-
-          path = pathlib.Path(synth.__file__)
+          spec = importlib.util.find_spec("librelane.scripts.pyosys.synthesize")
+          if spec is None or spec.origin is None:
+              raise SystemExit("Could not locate librelane.scripts.pyosys.synthesize")
+          path = pathlib.Path(spec.origin)
           text = path.read_text()
           needle = '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n    d.run_pass("share")  # Share logic across the design\n'
           replacement = '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n    d.run_pass("share")  # Share logic across the design\n'
