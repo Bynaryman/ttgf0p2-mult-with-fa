@@ -66,17 +66,17 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-import pathlib
-import librelane.scripts.pyosys.synthesize as synth
+  import pathlib
+  import librelane.scripts.pyosys.synthesize as synth
 
-path = pathlib.Path(synth.__file__)
-text = path.read_text()
-needle = '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n    d.run_pass("share")  # Share logic across the design\n'
-replacement = '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n    d.run_pass("share")  # Share logic across the design\n'
-if needle not in text:
-    raise SystemExit("Expected snippet not found in synthesize.py; LibreLane version may have changed")
-path.write_text(text.replace(needle, replacement, 1))
-print(f"Patched {path} to insert maccmap pass")
+  path = pathlib.Path(synth.__file__)
+  text = path.read_text()
+  needle = '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n    d.run_pass("share")  # Share logic across the design\n'
+  replacement = '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n    d.run_pass("share")  # Share logic across the design\n'
+  if needle not in text:
+      raise SystemExit("Expected snippet not found in synthesize.py; LibreLane version may have changed")
+  path.write_text(text.replace(needle, replacement, 1))
+  print(f"Patched {path} to insert maccmap pass")
 PY
 
       - name: Make GDS with LibreLane
