@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: pip install librelane==${{ env.LIBRELANE_VERSION }}
 
-      - name: Patch LibreLane synth flow (pre-map $fa)
+      - name: Patch LibreLane synth flow (pre-map $fa, skip ABC flattening)
         shell: bash
         run: |
           python - <<'PY'
@@ -74,20 +74,41 @@ jobs:
               sys.exit("Could not locate librelane.scripts.pyosys.synthesize")
           path = pathlib.Path(spec.origin)
           text = path.read_text()
-          block = (
+          # Insert maccmap + early fa_map
+          old_block = (
               '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n'
               '    d.run_pass("share")  # Share logic across the design\n'
           )
-          if block not in text:
-              sys.exit("Expected block not found in synthesize.py; LibreLane version may have changed")
-          replacement = (
+          new_block = (
               '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n'
               '    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n'
               '    d.run_pass("techmap", "-map", "src/fa_map.v")  # Map $fa early to tech cells\n'
               '    d.run_pass("share")  # Share logic across the design\n'
           )
-          path.write_text(text.replace(block, replacement, 1))
-          print(f"Patched {path} to insert maccmap and early fa techmap")
+          if old_block not in text:
+              sys.exit("Expected block not found in synthesize.py; LibreLane version may have changed")
+          text = text.replace(old_block, new_block, 1)
+          # Remove generic techmap/abc that flatten multi-output cells
+          text = text.replace(
+              '    d.run_pass("techmap")  # Map to primitive gates\n\n'
+              '    # Couple more fast opt iterations\n'
+              '    librelane_opt(d, fast=True)\n'
+              '    librelane_opt(d, fast=True)\n',
+              ''
+          )
+          text = text.replace(
+              '    d.run_pass(\n'
+              '        "abc", "-fast", *(["-dff"] if abc_dff else [])\n'
+              '    )  # Run ABC with fast settings\n'
+              '    d.run_pass("opt", "-fast")  # MORE fast optimization\n\n'
+              '    # Checks and Stats\n'
+              '    d.run_pass("hierarchy", "-check", "-top", top, "-nokeep_prints", "-nokeep_asserts")\n'
+              '    d.run_pass("check")\n'
+              '    d.run_pass("stat")\n',
+              ''
+          )
+          path.write_text(text)
+          print(f"Patched {path} to insert maccmap/map and skip techmap/ABC")
           PY
 
       - name: Make GDS with LibreLane (ORFS-like)
@@ -100,6 +121,31 @@ jobs:
         with:
           name: GDS_logs_orfs
           path: runs/wokwi/*
+
+      - name: Prepare tt_submission artifact
+        shell: bash
+        run: ./tt/tt_tool.py --create-tt-submission ${{ env.TT_ARGS }}
+
+      - name: Publish tt_submission artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tt_submission
+          path: |
+            src/*
+            docs/*
+            tt_submission/*
+            info.yaml
+            LICENSE
+
+      - name: Render PNG from GDS
+        shell: bash
+        run: './tt/tt_tool.py --create-png ${{ env.TT_ARGS }} 2>&1 || echo "WARNING: Failed to render PNG preview from GDS; error $?"'
+
+      - name: Upload gds_render (png) artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gds_render
+          path: gds_render.png
 
   precheck:
     needs: gds_orfs
