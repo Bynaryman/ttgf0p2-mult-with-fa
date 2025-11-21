@@ -25,11 +25,11 @@ jobs:
           PDK_ROOT=/home/runner/pdk
           TT_ARGS="--gf"
 
-          cat <<'__EOF' >> $GITHUB_ENV
-          PDK=$PDK
-          PDK_ROOT=$PDK_ROOT
-          TT_ARGS=$TT_ARGS
-          __EOF
+          cat <<__EOF >> $GITHUB_ENV
+PDK=$PDK
+PDK_ROOT=$PDK_ROOT
+TT_ARGS=$TT_ARGS
+__EOF
 
       - name: Install prerequisites
         uses: awalsh128/cache-apt-pkgs-action@v1.4.3
