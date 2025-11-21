@@ -68,17 +68,23 @@ jobs:
           python - <<'PY'
           import importlib.util
           import pathlib
+          import sys
           spec = importlib.util.find_spec("librelane.scripts.pyosys.synthesize")
           if spec is None or spec.origin is None:
-              raise SystemExit("Could not locate librelane.scripts.pyosys.synthesize")
+              sys.exit("Could not locate librelane.scripts.pyosys.synthesize")
           path = pathlib.Path(spec.origin)
           text = path.read_text()
           needle = '    d.run_pass("alumacc")  # Optimize arithmetic logic unitsb\n    d.run_pass("share")  # Share logic across the design\n'
-          replacement = '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n    d.run_pass("share")  # Share logic across the design\n'
+          replacement = (
+              '    d.run_pass("alumacc")  # Optimize arithmetic logic units\n'
+              '    d.run_pass("maccmap", "-auto", "-fa", "-ha")  # Preserve full/half adders\n'
+              '    d.run_pass("techmap", "-map", "src/fa_map.v")  # Map $fa early to library cell\n'
+              '    d.run_pass("share")  # Share logic across the design\n'
+          )
           if needle not in text:
-              raise SystemExit("Expected snippet not found in synthesize.py; LibreLane version may have changed")
+              sys.exit("Expected snippet not found in synthesize.py; LibreLane version may have changed")
           path.write_text(text.replace(needle, replacement, 1))
-          print(f"Patched {path} to insert maccmap pass")
+          print(f"Patched {path} to insert maccmap and early fa techmap")
           PY
 
       - name: Make GDS with LibreLane
